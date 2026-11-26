@@ -1564,7 +1564,7 @@ def auto_update_thread():
 
 
 def api_status(q, body=None):
-    return {"needs_login": bool(S.get("password")), "configured": bool(S["library_path"] and S.get("setup_done")), "version": VERSION, "build": BUILD, "update": bool(UPD["url"] and UPD["latest"] > BUILD), "name": socket.gethostname(), "id": S.get("server_id", "")}
+    return {"needs_login": bool(S.get("password")), "configured": bool(S["library_path"] and S.get("setup_done")), "version": VERSION, "build": BUILD, "update": bool(UPD["url"] and UPD["latest"] > BUILD and getattr(CTX, "local", False)), "local": bool(getattr(CTX, "local", False)), "name": socket.gethostname(), "id": S.get("server_id", "")}
 
 
 GET_ROUTES = {
@@ -1579,6 +1579,16 @@ POST_ROUTES = {
 
 
 # ---------------------------------------------------------------- HTTP
+CTX = threading.local()
+ADMIN_GET = {"/api/settings", "/api/net/scan", "/api/net/shares", "/api/fs/list", "/api/update/check"}
+ADMIN_POST = {"/api/settings", "/api/test_path", "/api/rescan", "/api/quit", "/api/restart", "/api/clear_cache",
+              "/api/update/check", "/api/update/apply", "/api/update/auto", "/api/net/login", "/api/net/verify"}
+
+
+def is_local_client(h):
+    return h.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "MangaViewer/" + VERSION
@@ -1618,12 +1628,15 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         path = u.path
         q = parse_qs(u.query)
+        CTX.local = is_local_client(self)
         try:
             if path == "/api/status":
                 return self._json(api_status(q))
             if path.startswith("/api/"):
                 if not authed(self):
                     return self._json({"error": "login required", "login": True}, 401)
+                if path in ADMIN_GET and not CTX.local:
+                    raise ApiError(403, "サーバーのPCでのみ操作できます")
                 if path == "/api/page":
                     return self.serve_page(q)
                 if path == "/api/qr":
@@ -1649,6 +1662,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path)
         path = u.path
+        CTX.local = is_local_client(self)
         try:
             body = self._body()
             if path == "/api/login":
@@ -1658,6 +1672,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(r, 200, extra)
             if not authed(self):
                 return self._json({"error": "login required", "login": True}, 401)
+            if path in ADMIN_POST and not CTX.local:
+                raise ApiError(403, "サーバーのPCでのみ操作できます")
             fn = POST_ROUTES.get(path)
             if not fn:
                 raise ApiError(404, "not found")

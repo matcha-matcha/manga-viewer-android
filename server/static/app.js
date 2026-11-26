@@ -169,7 +169,10 @@ async function showBrowse(path) {
   let data, rec = null;
   try {
     const st = await (await fetch("/api/status")).json();
-    if (!st.configured) { location.replace("#/w"); return; }
+    if (!st.configured) {
+      if (!st.local) { $app.replaceChildren(topbar(), h("div", { class: "msg" }, "サーバーがまだ設定されていません。サーバーのPCのタスクトレイアイコンを右クリック →「設定」で、マンガの場所を選んでください。")); return; }
+      location.replace("#/w"); return;
+    }
     data = await API("/api/list?path=" + q(path));
     if (!path && prefs.remember) { try { rec = await API("/api/recent"); } catch (e) {} }
   } catch (e) {
@@ -239,6 +242,7 @@ function qrCard(urls) {
 }
 
 async function showWizard() {
+  try { const st = await (await fetch("/api/status")).json(); if (!st.local) { location.replace("#/s"); return; } } catch (e) {}   // 初期設定はサーバーのPCだけ
   const head = (t) => h("div", { class: "topbar" }, h("a", { href: "#/b/", style: "font-weight:700;color:#fff" }, "📚 まんが"), h("b", { class: "grow" }, t),
     h("button", { class: "btn sm", onclick: () => { location.hash = "#/s"; } }, "⚙ 手動設定"));
   const view = (t, ...kids) => { $app.replaceChildren(head(t), h("div", { class: "set" }, ...kids)); window.scrollTo(0, 0); };
@@ -367,13 +371,64 @@ function updateCard() {
     h("div", { class: "rowcol" }, h("label", { style: "display:flex;gap:8px;align-items:center" }, autoChk, "サーバー起動時に自動で更新する(exe版)")));
 }
 
+/* ---- 設定画面の部品 ---- */
+const row = (label, input, hint) => h("div", { class: "row" }, h("label", { class: "t" }, label, hint ? h("div", { class: "hint" }, hint) : null), h("div", { class: "c" }, input));
+const sel = (k, opts) => {
+  const e = h("select", null, opts.map(([v, t]) => h("option", { value: v, selected: String(prefs[k]) === String(v) }, t)));
+  e.addEventListener("change", () => { prefs[k] = typeof PREF_DEF[k] === "number" ? +e.value : e.value; savePrefs(); });
+  return e;
+};
+const pchk = (k) => { const e = h("input", { type: "checkbox", checked: !!prefs[k] }); e.addEventListener("change", () => { prefs[k] = e.checked; savePrefs(); }); return e; };
+const pcol = (k) => { const e = h("input", { type: "color", value: prefs[k], style: "width:60px;height:38px;padding:2px;background:none;border:1px solid var(--line);border-radius:8px" }); e.addEventListener("input", () => { prefs[k] = e.value; savePrefs(); }); return e; };
+
+
+function displayCard() {
+  return h("div", { class: "card" }, h("h3", null, "📖 表示(この端末のみ)"),
+    row("見開き/単ページ", sel("mode", [["auto", "自動(PC=見開き / タブレット・スマホ=単ページ)"], ["double", "常に見開き"], ["single", "常に単ページ"]])),
+    row("綴じ方向", sel("binding", [["rtl", "右開き(日本のマンガ)"], ["ltr", "左開き"]])),
+    row("表紙を単独で表示", pchk("coverAlone"), "見開き時、1ページ目を単独にして以降のペアをずらさない"),
+    row("横長ページは単独表示", pchk("wideAlone"), "見開き画像などを1枚で大きく表示"),
+    row("画像の合わせ方(単ページ表示時)", sel("fit", [["width", "ウィンドウ横幅に合わせる(標準)"], ["height", "ウィンドウ縦幅に合わせる"], ["contain", "全体を画面に収める"]]), "横幅/縦幅のときは画像をドラッグして動かせます。端までいって更にスワイプすると前後のページへ"),
+    row("画質", sel("quality", [["auto", "自動(画面サイズに合わせる)"], ["light", "軽量(さらに小さく)"], ["orig", "原寸(縮小しない)"]])),
+    row("先読みページ数", sel("preload", [[2, "2"], [4, "4"], [6, "6"], [10, "10"]])),
+    row("クリック/スワイプ方向を反転", pchk("clickSwap"), "PC: 左クリック=戻る・右クリック=進む / スマホ: 上スワイプ=前ページ に入れ替え"),
+    row("マウスホイールでページ送り", pchk("wheel")),
+    row("背景色", pcol("bg")),
+    row("一覧の表示", sel("view", [["list", "リスト(サムネ+タイトル全文)"], ["grid", "サムネを並べる"]])),
+    row("一覧の並び順", sel("sort", SORTS)),
+    row("サムネの大きさ(並べる表示)", sel("tile", [[110, "小"], [150, "中"], [200, "大"]])),
+    row("起動時に前回の本の続きから開く", pchk("resume")),
+    row("続きから読む履歴を表示", pchk("remember")),
+    row("タッチ端末で自動的に全画面", pchk("autoFull"), "Android(Chrome)向け。iPhoneは「ホーム画面に追加」で全画面になります"),
+    h("div", { class: "hint", style: "padding:8px 0" }, "操作: PC=左クリック進む/右クリック戻る・←→・Space・ホイール・Fで全画面・上端/下端にマウスでメニュー ｜ スマホ/タブレット=上スワイプ次ページ/下スワイプ前ページ・画面の左右端タップでもめくれる・中央ダブルタップでメニュー"),
+  );
+}
+
+/* 端末(クライアント)の設定: 画面表示と接続先だけ */
+async function showClientSettings(st) {
+  const back = h("div", { class: "topbar" }, h("button", { class: "btn sm", onclick: () => { location.hash = sessionStorage.getItem("mv_last") || "#/b/"; } }, "← 戻る"), h("b", null, "設定"));
+  $app.replaceChildren(back, h("div", { class: "set" },
+    displayCard(),
+    h("div", { class: "card" }, h("h3", null, "🔌 接続先サーバー"),
+      h("div", { class: "rowcol" },
+        h("div", { class: "stat" }, `サーバー名: ${st.name || "-"}`, h("br"), `アドレス: ${location.host}`, h("br"), `サーバーのバージョン: v${st.version}${st.build ? " (build " + st.build + ")" : ""}`),
+        window.MangaApp ? h("div", { style: "padding-top:10px" }, h("button", { class: "btn", onclick: () => window.MangaApp.changeServer() }, "🔍 ネットワークからサーバーを探し直す"),
+          h("div", { class: "hint", style: "padding-top:6px" }, "PCの入れ替えやIP変更があっても、同じサーバーは自動で見つけ直します"),
+          window.MangaApp.checkUpdate ? h("div", { style: "padding-top:10px" }, h("button", { class: "btn sm", onclick: () => window.MangaApp.checkUpdate() }, `📱 このアプリの更新を確認${window.MangaApp.appBuild ? " (build " + window.MangaApp.appBuild() + ")" : ""}`)) : null)
+          : h("div", { class: "hint", style: "padding-top:8px" }, "接続先を変えるときは、デスクトップの「まんがビューワー(サーバー選び直し)」を使ってください"))),
+    h("div", { class: "card" }, h("h3", null, "ℹ サーバーの設定について"),
+      h("div", { class: "rowcol hint" }, "マンガの置き場所・キャッシュ・再起動・更新などは、サーバーのPCのタスクトレイにあるアイコンを右クリック →「設定」で行います。この端末からは変更できません。"))));
+}
+
 async function showSettings() {
   $app.replaceChildren(h("div", { class: "msg" }, "読み込み中…"));
+  let st0 = {};
+  try { st0 = await (await fetch("/api/status")).json(); } catch (e) {}
+  if (!st0.local) return showClientSettings(st0);      // サーバーのPC以外からは表示とサーバー接続先だけ
   let s;
   try { s = await API("/api/settings"); } catch (e) { if (e.message !== "login") $app.replaceChildren(h("div", { class: "msg err" }, e.message)); return; }
 
   const F = {};   // サーバー設定の入力欄
-  const row = (label, input, hint) => h("div", { class: "row" }, h("label", { class: "t" }, label, hint ? h("div", { class: "hint" }, hint) : null), h("div", { class: "c" }, input));
   const txt = (k, ph, type) => (F[k] = h("input", { type: type || "text", value: s[k] ?? "", placeholder: ph || "" }));
   const num = (k, min, max, step) => (F[k] = h("input", { type: "number", value: s[k], min, max, step: step || 1 }));
   const chk = (k) => (F[k] = h("input", { type: "checkbox", checked: !!s[k] }));
@@ -428,16 +483,8 @@ async function showSettings() {
     "Pillow(画像縮小): ", T.pillow ? h("span", { class: "ok" }, "あり") : h("span", { class: "ng" }, "なし (pip install pillow)"), h("br"),
     `検索インデックス: ${s.scan.indexed} 件${s.scan.running ? "(作成中…" + s.scan.count + ")" : ""}`);
 
-  const sel = (k, opts) => {
-    const e = h("select", null, opts.map(([v, t]) => h("option", { value: v, selected: String(prefs[k]) === String(v) }, t)));
-    e.addEventListener("change", () => { prefs[k] = typeof PREF_DEF[k] === "number" ? +e.value : e.value; savePrefs(); });
-    return e;
-  };
-  const pchk = (k) => { const e = h("input", { type: "checkbox", checked: !!prefs[k] }); e.addEventListener("change", () => { prefs[k] = e.checked; savePrefs(); }); return e; };
-  const pcol = (k) => { const e = h("input", { type: "color", value: prefs[k], style: "width:60px;height:38px;padding:2px;background:none;border:1px solid var(--line);border-radius:8px" }); e.addEventListener("input", () => { prefs[k] = e.value; savePrefs(); }); return e; };
-
   $app.replaceChildren(
-    h("div", { class: "topbar" }, h("button", { class: "btn sm", onclick: () => { location.hash = sessionStorage.getItem("mv_last") || "#/b/"; } }, "← 戻る"), h("b", null, "設定")),
+    h("div", { class: "topbar" }, h("button", { class: "btn sm", onclick: () => { location.hash = sessionStorage.getItem("mv_last") || "#/b/"; } }, "← 戻る"), h("b", null, "サーバー設定")),
     h("div", { class: "set" },
       h("div", { class: "card" }, h("h3", null, "📡 ネットワーク / サーバー"),
         h("div", { class: "rowcol" }, h("div", { style: "font-size:14px;margin-bottom:6px" }, "マンガ置き場のパス(ネットワークドライブ)",
@@ -460,9 +507,6 @@ async function showSettings() {
         h("div", { class: "rowcol" }, h("button", { class: "btn sm", onclick: async () => { await API("/api/clear_cache", {}); msg.className = "stat ok"; msg.textContent = "✔ キャッシュを削除しました"; } }, "キャッシュを全削除"), " ",
           h("button", { class: "btn sm", onclick: async () => { await API("/api/rescan", {}); msg.className = "stat ok"; msg.textContent = "✔ 検索インデックスの再作成を開始しました"; } }, "検索インデックス再スキャン")),
       ),
-      window.MangaApp ? h("div", { class: "card" }, h("h3", null, "📱 このアプリの接続先"), h("div", { class: "rowcol" },
-        h("button", { class: "btn", onclick: () => window.MangaApp.changeServer() }, "🔍 ネットワークからサーバーを探し直す"),
-        h("div", { class: "hint", style: "padding-top:6px" }, "PCの入れ替えやIP変更があっても、同じサーバーは自動で見つけ直します"))) : null,
       updateCard(),
       window.MangaApp ? null : qrCard(s.urls),
       h("div", { class: "card" }, h("h3", null, "このサーバーの状態"), toolsStat),
@@ -470,25 +514,6 @@ async function showSettings() {
         h("button", { class: "btn pri", onclick: () => save(false) }, "保存"), h("button", { class: "btn", onclick: () => save(true) }, "保存して再起動"),
         h("button", { class: "btn", onclick: async () => { if (confirm("サーバーを停止します。スマホ等からも使えなくなります。よろしいですか?")) { await API("/api/quit", {}); msg.textContent = "サーバーを停止しました(デスクトップのアイコンで再開できます)"; } } }, "サーバー停止"), msg),
 
-      h("div", { class: "card" }, h("h3", null, "📖 表示(この端末のみ)"),
-        row("見開き/単ページ", sel("mode", [["auto", "自動(PC=見開き / タブレット・スマホ=単ページ)"], ["double", "常に見開き"], ["single", "常に単ページ"]])),
-        row("綴じ方向", sel("binding", [["rtl", "右開き(日本のマンガ)"], ["ltr", "左開き"]])),
-        row("表紙を単独で表示", pchk("coverAlone"), "見開き時、1ページ目を単独にして以降のペアをずらさない"),
-        row("横長ページは単独表示", pchk("wideAlone"), "見開き画像などを1枚で大きく表示"),
-        row("画像の合わせ方(単ページ表示時)", sel("fit", [["width", "ウィンドウ横幅に合わせる(標準)"], ["height", "ウィンドウ縦幅に合わせる"], ["contain", "全体を画面に収める"]]), "横幅/縦幅のときは画像をドラッグして動かせます。端までいって更にスワイプすると前後のページへ"),
-        row("画質", sel("quality", [["auto", "自動(画面サイズに合わせる)"], ["light", "軽量(さらに小さく)"], ["orig", "原寸(縮小しない)"]])),
-        row("先読みページ数", sel("preload", [[2, "2"], [4, "4"], [6, "6"], [10, "10"]])),
-        row("クリック/スワイプ方向を反転", pchk("clickSwap"), "PC: 左クリック=戻る・右クリック=進む / スマホ: 上スワイプ=前ページ に入れ替え"),
-        row("マウスホイールでページ送り", pchk("wheel")),
-        row("背景色", pcol("bg")),
-        row("一覧の表示", sel("view", [["list", "リスト(サムネ+タイトル全文)"], ["grid", "サムネを並べる"]])),
-        row("一覧の並び順", sel("sort", SORTS)),
-        row("サムネの大きさ(並べる表示)", sel("tile", [[110, "小"], [150, "中"], [200, "大"]])),
-        row("起動時に前回の本の続きから開く", pchk("resume")),
-        row("続きから読む履歴を表示", pchk("remember")),
-        row("タッチ端末で自動的に全画面", pchk("autoFull"), "Android(Chrome)向け。iPhoneは「ホーム画面に追加」で全画面になります"),
-        h("div", { class: "hint", style: "padding:8px 0" }, "操作: PC=左クリック進む/右クリック戻る・←→・Space・ホイール・Fで全画面・上端/下端にマウスでメニュー ｜ スマホ/タブレット=上スワイプ次ページ/下スワイプ前ページ・画面の左右端タップでもめくれる・中央ダブルタップでメニュー"),
-      ),
     ));
 }
 
