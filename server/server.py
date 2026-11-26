@@ -1408,6 +1408,7 @@ def api_restart(q, body):
             SRV[0].server_close()
         except Exception:
             pass
+        tray_stop()
         respawn()
         os._exit(0)
     threading.Thread(target=go, daemon=True).start()
@@ -1417,6 +1418,7 @@ def api_restart(q, body):
 def api_quit(q, body):
     def go():
         time.sleep(0.5)
+        tray_stop()
         os._exit(0)
     threading.Thread(target=go, daemon=True).start()
     return {"ok": True}
@@ -1438,6 +1440,19 @@ try:
     from _build import BUILD          # exe作成時にCIが埋め込む通し番号
 except Exception:
     BUILD = 0
+TRAY = [None]
+
+
+def tray_stop():
+    """終了前にタスクトレイのアイコンを消す(残像防止)"""
+    try:
+        if TRAY[0]:
+            TRAY[0].stop()
+            time.sleep(0.25)
+    except Exception:
+        pass
+
+
 UPD = {"checked": 0, "latest": 0, "url": None, "apk": 0, "error": None, "busy": False}
 
 
@@ -1515,6 +1530,7 @@ def update_apply():
 
         def bye():
             time.sleep(0.8)
+            tray_stop()
             os._exit(0)
         threading.Thread(target=bye, daemon=True).start()
     except Exception:
@@ -1805,12 +1821,17 @@ def run_tray(srv):
         icon.stop()
         os._exit(0)
 
+    def on_restart(icon, item):
+        api_restart(None, {})
+
     menu = pystray.Menu(
         pystray.MenuItem("設定", on_settings, default=True),
         pystray.MenuItem("更新を確認してインストール", on_update),
+        pystray.MenuItem("再起動", on_restart),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("終了", on_quit))
     icon = pystray.Icon("MangaViewerServer", img, "まんがビューワー サーバー", menu)
+    TRAY[0] = icon
 
     def setup(ic):
         ic.visible = True
