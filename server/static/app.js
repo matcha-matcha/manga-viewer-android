@@ -14,7 +14,7 @@ const PREF_DEF = {
   coverAlone: true,    // 表紙は単独表示
   wideAlone: true,     // 横長ページは単独表示
   clickSwap: false,    // クリック/タップ方向を反転
-  fit: "contain",      // contain | width
+  fit: "width",        // width(ウィンドウ横幅・標準) | height(縦幅) | contain(画面に収める) ※単ページ表示時
   quality: "auto",     // auto(画面に合わせる) | light | orig
   preload: 4,
   bg: "#111111",
@@ -28,6 +28,7 @@ const PREF_DEF = {
 };
 let prefs = Object.assign({}, PREF_DEF);
 try { Object.assign(prefs, JSON.parse(localStorage.getItem("mv_prefs") || "{}")); } catch (e) {}
+if (!prefs.fitv2) { prefs.fit = "width"; prefs.fitv2 = 1; try { localStorage.setItem("mv_prefs", JSON.stringify(prefs)); } catch (e) {} }   // 新しい標準(横幅)へ一度だけ切替
 const savePrefs = () => { try { localStorage.setItem("mv_prefs", JSON.stringify(prefs)); } catch (e) {} };
 
 /* ---------- 共通 ---------- */
@@ -97,7 +98,7 @@ function topbar(title, extra) {
 
 function crumbs(path) {
   const parts = path ? path.split("/") : [];
-  const out = [h("a", { href: "#/b/" }, "ホーム")];
+  const out = [h("a", { href: "#/b/" }, "本棚")];
   let acc = "";
   parts.forEach((p, i) => {
     acc += (acc ? "/" : "") + p;
@@ -205,7 +206,7 @@ let searchTimer = null;
 async function showSearch(text) {
   clearTimeout(searchTimer);
   const body = h("div", null, h("div", { class: "wrap" }, h("div", { class: "msg" }, "検索中…")));
-  $app.replaceChildren(topbar(), h("div", { class: "crumbs" }, h("a", { href: "#/b/" }, "ホーム"), " / 検索: " + text), body);
+  $app.replaceChildren(topbar(), h("div", { class: "crumbs" }, h("a", { href: "#/b/" }, "本棚"), " / 検索: " + text), body);
   try {
     const r = await API("/api/search?q=" + q(text));
     const mk = i => ({ dir: i.type === "d", path: i.path, name: i.path.split("/").pop(), sub: i.path.includes("/") ? i.path.slice(0, i.path.lastIndexOf("/")) : "" });
@@ -468,7 +469,7 @@ async function showSettings() {
         row("綴じ方向", sel("binding", [["rtl", "右開き(日本のマンガ)"], ["ltr", "左開き"]])),
         row("表紙を単独で表示", pchk("coverAlone"), "見開き時、1ページ目を単独にして以降のペアをずらさない"),
         row("横長ページは単独表示", pchk("wideAlone"), "見開き画像などを1枚で大きく表示"),
-        row("画面への合わせ方", sel("fit", [["contain", "画面に収める"], ["width", "幅に合わせる(縦スクロール・単ページ時)"]])),
+        row("画像の合わせ方(単ページ表示時)", sel("fit", [["width", "ウィンドウ横幅に合わせる(標準)"], ["height", "ウィンドウ縦幅に合わせる"], ["contain", "全体を画面に収める"]]), "横幅/縦幅のときは画像をドラッグして動かせます。端までいって更にスワイプすると前後のページへ"),
         row("画質", sel("quality", [["auto", "自動(画面サイズに合わせる)"], ["light", "軽量(さらに小さく)"], ["orig", "原寸(縮小しない)"]])),
         row("先読みページ数", sel("preload", [[2, "2"], [4, "4"], [6, "6"], [10, "10"]])),
         row("クリック/スワイプ方向を反転", pchk("clickSwap"), "PC: 左クリック=戻る・右クリック=進む / スマホ: 上スワイプ=前ページ に入れ替え"),
@@ -498,6 +499,7 @@ function calcW() {
   if (prefs.quality === "orig") return 0;
   const dbl = isDouble() && R && !R.fitw();
   let w = innerWidth * (window.devicePixelRatio || 1) / (dbl ? 2 : 1);
+  if (!dbl && prefs.fit === "height") w = Math.max(innerWidth, innerHeight * 0.8) * (window.devicePixelRatio || 1);
   if (prefs.quality === "light") w *= 0.75;
   return Math.min(3000, Math.max(400, Math.ceil(w / 200) * 200));
 }
@@ -524,7 +526,7 @@ async function openReader(path) {
   document.title = stripExt(baseName(path));
 
   R = { path, root, stage, loading, toastEl, pg, slider, top, bot, modeBtn, bmBtn, bms: new Set(), total: 0, spread: [], imgs: new Map(), tk: 0, w: 0,
-        ac: new AbortController(), pinned: false, nb: null, fitw: () => prefs.fit === "width" && !isDouble() };
+        ac: new AbortController(), pinned: false, nb: null, fitw: () => (prefs.fit === "width" || prefs.fit === "height") && !isDouble() };
   const me = R;
 
   let info;
@@ -673,10 +675,12 @@ function draw(sp, ims) {
   clearTimeout(loadingT);
   me.loading.style.display = "none";
   const dbl = isDouble() && !me.fitw();
-  me.stage.className = (dbl ? "dbl " : "") + (prefs.binding === "rtl" ? "rtl " : "") + (me.fitw() ? "fitw" : "");
+  me.stage.className = (dbl ? "dbl " : "") + (prefs.binding === "rtl" ? "rtl " : "") + (me.fitw() ? (prefs.fit === "height" ? "fith" : "fitw") : "");
   ims.forEach((im, k) => { im.className = sp.length === 2 ? (k === 0 ? "first" : "second") : "single"; im.draggable = false; });
   me.stage.replaceChildren(...ims);
-  me.stage.scrollTop = 0;
+  me.stage.scrollTop = me.toBottom ? me.stage.scrollHeight : 0;
+  me.stage.scrollLeft = prefs.binding === "rtl" ? me.stage.scrollWidth : 0;
+  me.toBottom = false;
   const last = sp[sp.length - 1];
   me.slider.value = sp[0] + 1;
   updateBm();
@@ -758,6 +762,7 @@ async function prev() {
   const f = R.spread[0];
   if (f <= 0) { toast("最初のページです"); return; }
   const me = R;
+  me.toBottom = me.fitw();
   try { const s = await prevStart(f); if (R === me) go(s); } catch (e) { go(f - 1); }
 }
 
@@ -791,8 +796,18 @@ function attachEvents() {
   const rtl = () => prefs.binding === "rtl";
 
   // --- マウス ---
+  let md = null;
+  me.root.addEventListener("mousedown", e => { if (me.fitw() && e.button === 0 && !inBars(e.target)) md = { x: e.clientX, y: e.clientY, sl: me.stage.scrollLeft, st: me.stage.scrollTop, moved: false }; }, sig);
+  window.addEventListener("mousemove", e => {
+    if (!md) return;
+    const dx = e.clientX - md.x, dy = e.clientY - md.y;
+    if (Math.abs(dx) + Math.abs(dy) > 6) md.moved = true;
+    if (md.moved) { me.stage.scrollLeft = md.sl - dx; me.stage.scrollTop = md.st - dy; }
+  }, sig);
+  window.addEventListener("mouseup", () => { if (md && md.moved) me.dragAt = Date.now(); md = null; }, sig);
   me.root.addEventListener("click", e => {
     if (inBars(e.target) || e.button !== 0) return;
+    if (Date.now() - (me.dragAt || 0) < 300) return;
     if (Date.now() - (me.touchAt || 0) < 700) return;
     fwd();
   }, sig);
@@ -826,6 +841,7 @@ function attachEvents() {
     me.multi = false;
     const t = e.touches[0];
     t0 = { x: t.clientX, y: t.clientY, t: Date.now() };
+    if (me.fitw()) { const st = me.stage; me.eTop = st.scrollTop <= 1; me.eBot = st.scrollTop + st.clientHeight >= st.scrollHeight - 2; }
   }, { passive: true, signal: me.ac.signal });
   me.root.addEventListener("touchend", e => {
     if (!t0 || me.multi) { if (e.touches.length === 0) me.multi = false; t0 = null; return; }
@@ -836,7 +852,9 @@ function attachEvents() {
     const swapped = prefs.clickSwap;
     // 上スワイプ=次ページ / 下スワイプ=前ページ
     if (Math.abs(dy) > 45 && Math.abs(dy) > Math.abs(dx) * 1.4 && dt < 1000) {
-      if (me.fitw()) return;   // 幅合わせ(縦スクロール)時は通常スクロール
+      if (me.fitw()) {          // 画像をドラッグで動かす。端にいる状態からさらにスワイプしたらページ移動
+        if (Math.abs(dy) < 70 || (dy < 0 ? !me.eBot : !me.eTop)) return;
+      }
       e.preventDefault();
       let forward = dy < 0;
       if (swapped) forward = !forward;
