@@ -14,13 +14,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pyinstaller pillow pymupdf qrcode
+      - run: pip install pyinstaller pillow pymupdf qrcode pystray
       - name: Build exe
         shell: bash
         working-directory: server
         run: |
           echo "BUILD = ${{ github.run_number }}" > _build.py
-          pyinstaller --noconfirm --onedir --noconsole --name MangaViewerServer --add-data "static;static" --hidden-import _build --collect-submodules qrcode --collect-all pymupdf server.py
+          pyinstaller --noconfirm --onedir --noconsole --name MangaViewerServer --icon icon.ico --version-file version.txt --hidden-import pystray._win32 --add-data "static;static" --hidden-import _build --collect-submodules qrcode --collect-all pymupdf server.py
           mkdir -p dist/MangaViewerServer/tools
           cp "/c/Program Files/7-Zip/7z.exe" "/c/Program Files/7-Zip/7z.dll" dist/MangaViewerServer/tools/
           cp README.txt dist/MangaViewerServer/

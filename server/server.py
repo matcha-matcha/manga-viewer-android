@@ -1737,25 +1737,9 @@ def init():
     return srv
 
 
-def _find_browser():
-    for env in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"):
-        b = os.environ.get(env)
-        if b:
-            for rel in (("Microsoft", "Edge", "Application", "msedge.exe"), ("Google", "Chrome", "Application", "chrome.exe")):
-                c = os.path.join(b, *rel)
-                if os.path.isfile(c):
-                    return c
-    return None
-
-
-def open_app_window(url):
-    b = _find_browser()
-    if b:
-        subprocess.Popen([b, "--app=" + url, "--user-data-dir=" + os.path.join(DATA, "app-profile"), "--window-size=1400,900",
-                          "--no-first-run", "--no-default-browser-check", "--disable-features=Translate"])
-    else:
-        import webbrowser
-        webbrowser.open(url)
+def open_settings_page(configured=True):
+    import webbrowser
+    webbrowser.open("http://localhost:%d/%s" % (S["port"], "#/s" if configured else ""))
 
 
 def _make_link(path, target, args, desc):
@@ -1770,34 +1754,93 @@ def make_shortcuts():
         desk = subprocess.run(["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('Desktop')"],
                               capture_output=True, timeout=20, creationflags=NOWIN).stdout.decode("utf-8", "replace").strip()
         if desk:
-            _make_link(os.path.join(desk, "まんがビューワー.lnk"), sys.executable, "", "まんがビューワーを開く")
+            _make_link(os.path.join(desk, "まんがビューワー サーバー.lnk"), sys.executable, "", "まんがビューワー サーバー(設定を開く)")
         st = os.path.join(os.environ["APPDATA"], "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
-        _make_link(os.path.join(st, "まんがビューワー(サーバー).lnk"), sys.executable, "--server", "まんがビューワーのサーバー")
+        _make_link(os.path.join(st, "まんがビューワー サーバー.lnk"), sys.executable, "", "まんがビューワー サーバー")
     except Exception as e:
         print("ショートカット作成失敗:", e)
+
+
+def _msgbox(text, title="まんがビューワー サーバー", yesno=False):
+    import ctypes
+    flags = (0x24 if yesno else 0x40) | 0x40000      # はい/いいえ+?アイコン / 情報アイコン、最前面
+    return ctypes.windll.user32.MessageBoxW(0, text, title, flags)
+
+
+def run_tray(srv):
+    """タスクトレイに常駐。右クリック: 設定 / 更新を確認してインストール / 終了"""
+    import pystray
+    from PIL import Image, ImageDraw
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((2, 2, 62, 62), 12, fill=(43, 98, 168, 255))
+    d.rectangle((14, 14, 50, 50), fill=(255, 255, 255, 255))
+    d.rectangle((14, 14, 32, 50), fill=(220, 232, 247, 255))
+    d.line((32, 14, 32, 50), fill=(43, 98, 168, 255), width=3)
+
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def on_settings(icon=None, item=None):
+        open_settings_page(bool(S.get("library_path") and S.get("setup_done")))
+
+    def on_update(icon=None, item=None):
+        def work():
+            update_check()
+            if UPD["error"]:
+                _msgbox("更新を確認できません。\n" + UPD["error"])
+            elif not (UPD["url"] and UPD["latest"] > BUILD):
+                _msgbox("最新版です (build %d)" % BUILD)
+            elif _msgbox("新しい版 (build %d) があります。今すぐインストールしますか?\n(自動で再起動します)" % UPD["latest"], yesno=True) == 6:
+                try:
+                    update_apply()
+                except Exception as e:
+                    _msgbox("更新に失敗しました: %s" % e)
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_quit(icon, item):
+        try:
+            save_settings()
+        except Exception:
+            pass
+        icon.stop()
+        os._exit(0)
+
+    menu = pystray.Menu(
+        pystray.MenuItem("設定", on_settings, default=True),
+        pystray.MenuItem("更新を確認してインストール", on_update),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("終了", on_quit))
+    icon = pystray.Icon("MangaViewerServer", img, "まんがビューワー サーバー", menu)
+
+    def setup(ic):
+        ic.visible = True
+        try:
+            ic.notify("起動しました。右クリックで設定を開けます", "まんがビューワー サーバー")
+        except Exception:
+            pass
+    icon.run(setup)
 
 
 def main():
     if FROZEN and IS_WIN:
         os.makedirs(DATA, exist_ok=True)
         load_settings()
-        url = "http://localhost:%d/" % S["port"]
-        try:                                            # すでに起動済みなら窓を開くだけ
-            urllib_req = __import__("urllib.request").request
-            urllib_req.urlopen(url + "api/status", timeout=1.5).read()
+        try:                                            # すでに起動済みなら設定を開くだけ(二重起動しない)
+            __import__("urllib.request").request.urlopen("http://localhost:%d/api/status" % S["port"], timeout=1.5).read()
             if "--server" not in sys.argv:
-                open_app_window(url)
+                open_settings_page()
             return
         except Exception:
             pass
     srv = init()
+    first = not (S.get("library_path") and S.get("setup_done"))
     if FROZEN and IS_WIN:
         if not S.get("shortcuts_made"):
             S["shortcuts_made"] = True
             save_settings()
             threading.Thread(target=make_shortcuts, daemon=True).start()
-        if "--server" not in sys.argv:
-            threading.Timer(1.2, open_app_window, args=("http://localhost:%d/" % S["port"],)).start()
+        if first:                                       # 初回だけ設定画面を開く
+            threading.Timer(1.5, open_settings_page, args=(False,)).start()
     threading.Thread(target=auto_update_thread, daemon=True).start()
     t = find_tools()
     print("=" * 56)
@@ -1809,6 +1852,12 @@ def main():
     for ip in local_ips():
         print("   http://%s:%d/" % (ip, S["port"]))
     print("=" * 56, flush=True)
+    if FROZEN and IS_WIN:
+        try:
+            run_tray(srv)
+            return
+        except Exception as e:
+            print("タスクトレイ起動失敗:", e)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
