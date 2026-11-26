@@ -520,14 +520,15 @@ async function openReader(path) {
   const slider = h("input", { type: "range", min: 1, max: 1, value: 1 });
   const modeBtn = h("button", { class: "btn", title: "見開き/単ページ切替(D)" }, "");
   const top = h("div", { class: "rbar top hide" },
-    h("button", { class: "btn", onclick: () => closeReader() }, "📚 本棚"), title, modeBtn,
+    h("button", { class: "btn", onclick: () => goShelf() }, "📚 本棚"), hasParent(path) ? h("button", { class: "btn", title: "このマンガの巻一覧へ戻る", onclick: () => closeReader() }, "📖 巻一覧") : null, title, modeBtn,
     h("button", { class: "btn", title: "全画面(F)", onclick: () => toggleFull() }, "⛶"),
     h("button", { class: "btn", title: "設定", onclick: () => { location.hash = "#/s"; } }, "⚙"));
   const bmBtn = h("button", { class: "btn bmb", title: "しおりを追加/削除 (B)" }, "🔖");
   const bmList = h("button", { class: "btn", title: "しおり一覧" }, "📑");
   const bot = h("div", { class: "rbar bot hide" }, bmBtn, pg, slider, bmList);
-  const homeBtn = h("button", { class: "homebtn", title: "本棚へ戻る", onclick: e => { e.stopPropagation(); closeReader(); } }, "📚");
-  const root = h("div", { id: "reader", style: `--rbg:${prefs.bg}` }, stage, loading, toastEl, top, bot, homeBtn);
+  const homeBtn = h("button", { class: "homebtn", title: "本棚へ戻る", onclick: e => { e.stopPropagation(); goShelf(); } }, "📚");
+  const volBtn = hasParent(path) ? h("button", { class: "homebtn vol", title: "巻一覧へ戻る", onclick: e => { e.stopPropagation(); closeReader(); } }, "📖") : null;
+  const root = h("div", { id: "reader", style: `--rbg:${prefs.bg}` }, stage, loading, toastEl, top, bot, homeBtn, volBtn);
   $app.replaceChildren(root);
   document.title = stripExt(baseName(path));
 
@@ -568,6 +569,8 @@ function leaveReader() {
   R = null;
 }
 
+const hasParent = p => p.includes("/");
+function goShelf() { location.hash = "#/b/"; }          // いちばん上の本棚
 function closeReader() {
   if (!R) return;
   const p = R.path.includes("/") ? R.path.slice(0, R.path.lastIndexOf("/")) : "";

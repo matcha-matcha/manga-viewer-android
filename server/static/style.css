@@ -108,3 +108,4 @@ h2{font-size:14px;color:var(--fg2);font-weight:600;margin:18px 0 8px}
 .homebtn:active{opacity:1}
 @media (pointer:fine){.homebtn{display:none}}
 .updban{margin:8px 14px 0;padding:10px 12px;border-radius:8px;background:#2b4a7a;color:#fff;font-size:14px;cursor:pointer;max-width:1470px}
+.homebtn.vol{top:calc(max(8px,env(safe-area-inset-top)) + 48px)}
