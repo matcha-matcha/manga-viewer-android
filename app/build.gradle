@@ -2,6 +2,8 @@ plugins {
     id 'com.android.application'
 }
 
+def bn = Integer.parseInt((project.findProperty('buildNumber') ?: '1').toString())
+
 android {
     namespace 'jp.mangaviewer.app'
     compileSdk 34
@@ -10,8 +12,8 @@ android {
         applicationId "jp.mangaviewer.app"
         minSdk 23
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode bn
+        versionName "1." + bn
     }
     buildTypes {
         release {

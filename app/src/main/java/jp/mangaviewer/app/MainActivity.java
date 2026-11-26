@@ -3,6 +3,10 @@ package jp.mangaviewer.app;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.net.Uri;
+import android.widget.Toast;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Build;
@@ -27,6 +31,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -87,6 +92,7 @@ public class MainActivity extends Activity {
         buildUi();
         setContentView(root);
 
+        checkUpdate(false);          // 起動時に自動で更新確認(6時間に1回まで)
         String saved = sp.getString("url", null);
         if (saved == null) {
             startDiscovery(null);
@@ -457,11 +463,126 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ------------------------------------------------------------ アプリ自身の更新
+    static final String REPO = "matcha-matcha/manga-viewer-android";
+
+    private int myBuild() {
+        try {
+            PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return pi.versionCode;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** GitHub の最新リリース(build-N)を調べ、新しければ「更新しますか?」を出す。manual=true は結果を必ず表示 */
+    private void checkUpdate(final boolean manual) {
+        long now = System.currentTimeMillis();
+        if (!manual && now - sp.getLong("upd_t", 0) < 6L * 3600 * 1000) return;
+        sp.edit().putLong("upd_t", now).apply();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                int best = -1;
+                String url = null;
+                String err = null;
+                HttpURLConnection c = null;
+                try {
+                    c = (HttpURLConnection) new URL("https://api.github.com/repos/" + REPO + "/releases?per_page=30").openConnection();
+                    c.setConnectTimeout(6000);
+                    c.setReadTimeout(8000);
+                    c.setRequestProperty("User-Agent", "MangaViewer");
+                    c.setRequestProperty("Accept", "application/vnd.github+json");
+                    if (c.getResponseCode() != 200) {
+                        err = "HTTP " + c.getResponseCode();
+                    } else {
+                        BufferedReader br = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"));
+                        StringBuilder sb = new StringBuilder();
+                        String ln;
+                        while ((ln = br.readLine()) != null) sb.append(ln);
+                        br.close();
+                        JSONArray arr = new JSONArray(sb.toString());
+                        for (int i = 0; i < arr.length(); i++) {
+                            JSONObject r = arr.getJSONObject(i);
+                            String tag = r.optString("tag_name", "");
+                            if (!tag.startsWith("build-")) continue;
+                            int n;
+                            try {
+                                n = Integer.parseInt(tag.substring(6));
+                            } catch (Exception e) {
+                                continue;
+                            }
+                            JSONArray as = r.optJSONArray("assets");
+                            if (as == null || n <= best) continue;
+                            for (int k = 0; k < as.length(); k++) {
+                                JSONObject a = as.getJSONObject(k);
+                                if (a.optString("name", "").endsWith(".apk")) {
+                                    best = n;
+                                    url = a.optString("browser_download_url", null);
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    err = String.valueOf(e.getMessage());
+                } finally {
+                    if (c != null) c.disconnect();
+                }
+                final int fb = best;
+                final String fu = url;
+                final String fe = err;
+                ui.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isFinishing()) return;
+                        int mine = myBuild();
+                        if (fe != null || fu == null) {
+                            if (manual) Toast.makeText(MainActivity.this, "更新を確認できません (" + (fe == null ? "なし" : fe) + ")", Toast.LENGTH_LONG).show();
+                        } else if (fb > mine) {
+                            new AlertDialog.Builder(MainActivity.this)
+                                    .setTitle("アプリの更新があります")
+                                    .setMessage("新しいバージョン (build " + fb + ") があります。\n今のバージョン: build " + mine + "\n\n「更新」を押すとダウンロードが始まります。終わったら通知かダウンロード一覧のファイルをタップしてインストールしてください。")
+                                    .setPositiveButton("更新", new DialogInterface.OnClickListener() {
+                                        @Override
+                                        public void onClick(DialogInterface d, int w) {
+                                            try {
+                                                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(fu)));
+                                            } catch (Exception e) {
+                                                Toast.makeText(MainActivity.this, "ブラウザを開けません", Toast.LENGTH_LONG).show();
+                                            }
+                                        }
+                                    })
+                                    .setNegativeButton("あとで", null)
+                                    .show();
+                        } else if (manual) {
+                            Toast.makeText(MainActivity.this, "最新版です (build " + mine + ")", Toast.LENGTH_LONG).show();
+                        }
+                    }
+                });
+            }
+        }).start();
+    }
+
     // ------------------------------------------------------------ Web → アプリ連携
     private class Bridge {
         @JavascriptInterface
         public boolean isApp() {
             return true;
+        }
+
+        @JavascriptInterface
+        public int appBuild() {
+            return myBuild();
+        }
+
+        @JavascriptInterface
+        public void checkUpdate() {
+            ui.post(new Runnable() {
+                @Override
+                public void run() {
+                    MainActivity.this.checkUpdate(true);
+                }
+            });
         }
 
         @JavascriptInterface

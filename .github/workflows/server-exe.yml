@@ -1,0 +1,38 @@
+name: Build Server exe
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main, master]
+    paths: ['server/**', '.github/workflows/server-exe.yml']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyinstaller pillow pymupdf qrcode
+      - name: Build exe
+        shell: bash
+        working-directory: server
+        run: |
+          echo "BUILD = ${{ github.run_number }}" > _build.py
+          pyinstaller --noconfirm --onedir --noconsole --name MangaViewerServer --add-data "static;static" --hidden-import _build --collect-submodules qrcode --collect-all pymupdf server.py
+          mkdir -p dist/MangaViewerServer/tools
+          cp "/c/Program Files/7-Zip/7z.exe" "/c/Program Files/7-Zip/7z.dll" dist/MangaViewerServer/tools/
+          cp README.txt dist/MangaViewerServer/
+      - name: Zip
+        shell: bash
+        run: python -c "import shutil; shutil.make_archive('MangaViewerServer','zip','server/dist','MangaViewerServer')"
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "server-${{ github.run_number }}" MangaViewerServer.zip \
+            --title "まんがビューワー サーバー build ${{ github.run_number }}" \
+            --notes "展開して MangaViewerServer.exe を起動してください。" \
+            --latest=false

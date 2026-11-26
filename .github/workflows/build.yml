@@ -3,6 +3,7 @@ on:
   workflow_dispatch: {}
   push:
     branches: [main, master]
+    paths-ignore: ['server/**', '.github/workflows/server-exe.yml']
 permissions:
   contents: write
 jobs:
@@ -17,7 +18,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-      - run: gradle assembleDebug
+      - run: gradle assembleDebug -PbuildNumber=${{ github.run_number }}
       - run: cp app/build/outputs/apk/debug/app-debug.apk MangaViewer.apk
       - uses: actions/upload-artifact@v4
         with:
