@@ -15,6 +15,14 @@ android {
         versionCode bn
         versionName "1." + bn
     }
+    signingConfigs {
+        debug {
+            storeFile file('mangaviewer.keystore')
+            storePassword 'mangaviewer'
+            keyAlias 'mv'
+            keyPassword 'mangaviewer'
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
