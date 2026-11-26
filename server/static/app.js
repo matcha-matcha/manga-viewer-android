@@ -198,7 +198,9 @@ async function showBrowse(path) {
     body.replaceChildren(controlsBar(render, true), wrap);
   };
   render();
-  $app.replaceChildren(topbar(), crumbs(path), body);
+  let ban = null;
+  if (!path) { try { const st2 = await (await fetch("/api/status")).json(); if (st2.update) ban = h("div", { class: "updban", onclick: () => { location.hash = "#/s"; } }, "🔔 サーバーアプリの新しいバージョンがあります。タップして更新"); } catch (e) {} }
+  $app.replaceChildren(...[topbar(), ban, crumbs(path), body].filter(Boolean));
   window.scrollTo(0, 0);
 }
 
@@ -342,20 +344,24 @@ function updateCard() {
     if (u.error) { st.className = "stat err"; st.textContent = `サーバーアプリ v${u.version} (build ${u.build}) ／ 更新を確認できません: ${u.error}`; }
     else if (u.available) { st.className = "stat ok"; st.textContent = `サーバーアプリ v${u.version} (build ${u.build}) → 新しい build ${u.latest} があります`; }
     else { st.className = "stat"; st.textContent = `サーバーアプリ v${u.version} (build ${u.build}) は最新です`; }
-    if (u.available && u.can_apply) btns.append(h("button", { class: "btn pri", onclick: async () => {
-      if (!confirm("サーバーを更新して再起動します(数十秒かかります)。よろしいですか?")) return;
-      st.textContent = "更新をダウンロード中… 完了するとサーバーが自動で再起動します";
-      try { await API("/api/update/apply", {}); } catch (e) { st.className = "stat err"; st.textContent = e.message; return; }
-      st.textContent = "更新中… 少し待ってから画面を再読み込みしてください";
-      setTimeout(() => location.reload(), 15000);
-    } }, "⬆ 今すぐサーバーを更新"));
     if (u.available && !u.can_apply) btns.append(h("div", { class: "hint" }, "(Python直接起動のため手動更新です。exe版は自動更新できます)"));
   };
-  const check = async () => { st.className = "stat"; st.textContent = "確認中…"; try { render(await API("/api/update/check", {})); } catch (e) { st.className = "stat err"; st.textContent = e.message; } };
+  const check = async () => { st.className = "stat"; st.textContent = "確認中…"; try { const u = await API("/api/update/check", {}); render(u); return u; } catch (e) { st.className = "stat err"; st.textContent = e.message; } };
+  const install = async () => {          // 確認 → 新しければそのままインストール
+    const u = await check();
+    if (!u || !u.available) return;
+    if (!u.can_apply) { alert("Python直接起動のため自動インストールできません。exe版をお使いください。"); return; }
+    if (!confirm(`新しい build ${u.latest} があります。今すぐインストールしますか?\n(数十秒でサーバーが自動で再起動します。しおりや読書の記録は消えません)`)) return;
+    st.className = "stat"; st.textContent = "ダウンロード中… 完了するとサーバーが自動で再起動します";
+    try { await API("/api/update/apply", {}); } catch (e) { st.className = "stat err"; st.textContent = e.message; return; }
+    st.textContent = "インストール中… 再起動したら自動でこの画面を読み込み直します";
+    const t0 = Date.now();
+    const poll = setInterval(async () => { try { const r = await fetch("/api/status"); if (r.ok && Date.now() - t0 > 6000) { clearInterval(poll); location.reload(); } } catch (e) {} }, 2000);
+  };
   autoChk.addEventListener("change", async () => { try { await API("/api/update/auto", { on: autoChk.checked }); } catch (e) {} });
   check();
   return h("div", { class: "card" }, h("h3", null, "⬆ アップデート"), h("div", { class: "rowcol" }, st),
-    h("div", { class: "rowcol", style: "display:flex;gap:10px;flex-wrap:wrap" }, h("button", { class: "btn sm", onclick: check }, "サーバーの更新を確認"),
+    h("div", { class: "rowcol", style: "display:flex;gap:10px;flex-wrap:wrap" }, h("button", { class: "btn pri", onclick: install }, "⬆ 更新を確認してインストール"),
       window.MangaApp && window.MangaApp.checkUpdate ? h("button", { class: "btn sm", onclick: () => window.MangaApp.checkUpdate() }, `📱 スマホアプリの更新を確認${window.MangaApp.appBuild ? " (build " + window.MangaApp.appBuild() + ")" : ""}`) : null),
     btns,
     h("div", { class: "rowcol" }, h("label", { style: "display:flex;gap:8px;align-items:center" }, autoChk, "サーバー起動時に自動で更新する(exe版)")));

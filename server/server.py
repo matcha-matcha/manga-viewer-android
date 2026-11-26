@@ -1542,10 +1542,13 @@ def auto_update_thread():
             update_apply()
         except Exception as e:
             print("自動更新失敗:", e)
+    while True:                      # その後も6時間ごとに確認(バナー表示用)
+        time.sleep(6 * 3600)
+        update_check()
 
 
 def api_status(q, body=None):
-    return {"needs_login": bool(S.get("password")), "configured": bool(S["library_path"] and S.get("setup_done")), "version": VERSION, "build": BUILD, "name": socket.gethostname(), "id": S.get("server_id", "")}
+    return {"needs_login": bool(S.get("password")), "configured": bool(S["library_path"] and S.get("setup_done")), "version": VERSION, "build": BUILD, "update": bool(UPD["url"] and UPD["latest"] > BUILD), "name": socket.gethostname(), "id": S.get("server_id", "")}
 
 
 GET_ROUTES = {
@@ -1555,7 +1558,7 @@ GET_ROUTES = {
 }
 POST_ROUTES = {
     "/api/progress": api_progress, "/api/settings": api_settings_set, "/api/test_path": api_test_path,
-    "/api/bookmark": api_bookmark_set, "/api/update/apply": api_update_apply, "/api/update/auto": api_update_auto, "/api/rescan": api_rescan, "/api/quit": api_quit, "/api/net/login": api_net_login, "/api/net/verify": api_net_verify, "/api/clear_cache": api_clear_cache, "/api/restart": api_restart,
+    "/api/bookmark": api_bookmark_set, "/api/update/check": api_update_check, "/api/update/apply": api_update_apply, "/api/update/auto": api_update_auto, "/api/rescan": api_rescan, "/api/quit": api_quit, "/api/net/login": api_net_login, "/api/net/verify": api_net_verify, "/api/clear_cache": api_clear_cache, "/api/restart": api_restart,
 }
 
 
